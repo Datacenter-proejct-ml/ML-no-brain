@@ -18,7 +18,6 @@ class trainModel:
 
             #### getting the best model 
             best_model_name, best_model = tuner.Model_finder().get_best_model(x_train, y_train, x_test, y_test)
-            print(best_model)
             pickle.dump(best_model, open(f'{best_model}_model', 'wb'))
         except Exception:
             print(f'This is the error that we have received from the upper management {Exception}\nPlease try again later!!!')

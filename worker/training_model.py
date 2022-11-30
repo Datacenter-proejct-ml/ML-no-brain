@@ -1,7 +1,7 @@
 from sklearn.model_selection import train_test_split
-# from file_operations import file_methods
 import tuner
 import pandas as pd
+import pickle
 
 
 class trainModel:
@@ -9,7 +9,7 @@ class trainModel:
         pass
 
     def trainingModel(self):
-        # try:
+        try:
             # Splitting the data into training and test set for each cluster one by one
             df = pd.read_csv('cleaned.csv')
             x_train, x_test, y_train, y_test = train_test_split(df.drop('Output', axis = 1), df.Output, test_size=1 / 3, random_state=36)
@@ -19,14 +19,8 @@ class trainModel:
             #### getting the best model 
             best_model_name, best_model = tuner.Model_finder().get_best_model(x_train, y_train, x_test, y_test)
             print(best_model)
-            # file_op = file_methods.File_Operation(self.file_object, self.log_writer)
-            # save_model = file_op.save_model(best_model, best_model_name)
-        # except Exception:
-        #     print('sdckbjh')
-        #     pass
+            pickle.dump(best_model, open(f'{best_model}_model', 'wb'))
+        except Exception:
+            print(f'This is the error that we have received from the upper management {Exception}\nPlease try again later!!!')
         
 a = trainModel().trainingModel()
-print(a)
-
-
-        

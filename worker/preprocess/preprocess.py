@@ -24,68 +24,90 @@ class App_Logger:
 
 
 def cleaning(file):
-    credentials = service_account.Credentials.from_service_account_file(
-        os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
-    scoped_credentials = credentials.with_scopes(
-        ['https://www.googleapis.com/auth/cloud-platform'])
+    credentials = service_account.Credentials.from_service_account_file(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+    scoped_credentials = credentials.with_scopes(['https://www.googleapis.com/auth/cloud-platform'])
     storage_client = storage.Client()
     bucket_name = 'dtsc-auto-ml'
     bucket = storage_client.get_bucket(bucket_name)
 
-    blobs = list(bucket.list_blobs(prefix='raw_data/', delimiter='/'))
+    blobs = list(bucket.list_blobs(prefix = 'raw_data/', delimiter='/'))
 
-    files = [blob.name.split('/')[1]
-             for blob in blobs]
+    files = [blob.name.split('/')[1] for blob in blobs]
 
-    print(files)
-
+    # print(files)
     for i in range(len(files)):
         if files[i] == f'{file}.csv':
             file_name = files[i]
             break
 
-    print(file_name)
+    # print(file_name)
 
     if file_name:
-
-        blob = bucket.blob(f'raw_data/{file_name}')
-        blob.download_to_filename(
-            f'/mnt/c/project_dtsc/ML-no-brain/worker/preprocess/{file_name}')
-
-        data = pd.read_csv(file_name)
-
-        remove_cols = []
         log_writer = App_Logger()
         file_object = open("ModelTrainingLog.txt", 'a+')
         log_writer.log(file_object, 'Start of Training')
+        
+        blob = bucket.blob(f'raw_data/{file_name}')
+        blob.download_to_filename(f'{file_name}')
 
-        preprocessor = preprocessing_impute.Preprocessor(
-            file_object, log_writer)
+        data = pd.read_csv(file_name)
+        remove_cols = []
+
+        preprocessor = preprocessing_impute.Preprocessor(file_object, log_writer)
 
         if 'Output' not in data.columns:
             print('No Output column in CSV file')  # Comment this later
-            log_writer.log(
-                file_object, 'CSV file in wrong format. No Output column found.')
-
-        is_null_present = [True if len(
-            data.dropna()) != len(data) else False][0]
-        if is_null_present:
-            data = preprocessor.impute_missing_values(data)
-
+            log_writer.log(file_object, 'CSV file in wrong format. No Output column found.')
+            
+        # Removing columns with more than 40% null values
         for i in data.columns:
-            if data[i].nunique() == 1:
+            if len(data[i].dropna()) <= len(data[i]) * 0.6 or data[i].nunique() == len(data):
                 remove_cols.append(i)
-                log_writer.log(file_object, f'Removed clumn {i} from dataset')
+        data.drop(remove_cols, axis = 1, inplace = True)
 
-        data.drop(remove_cols, axis=1, inplace=True)
+        # Filling in null values of categorical columns
+        for i in data.columns:
+            try:
+                data[i].fillna(data[i].mean())
+            except:
+                data[i].fillna(data[i].mode())
+
+        # Dropping rows with outliers in them
+        remove_rows = []
+        for i in data.drop('Output', axis = 1).columns:
+            try:
+                mean = data[i].mean()
+                std = data[i].std()
+                for j in data[i]:
+                    if mean - 3 * std < data[i] < mean + 3 * std:
+                        remove_rows.append(j)
+            except:
+                continue
+        data.drop(remove_rows, inplace = True)
+    
+        remove_cols = []
+        # One hot encoding columns with less than 5 categories
+        for i in data.drop('Output', axis = 1).columns:
+            if data[i].nunique() <= 4:
+                data = data.join(pd.get_dummies(data[i], drop_first = True, prefix = i + '_'))
+        data.drop(remove_cols, axis = 1, inplace = True)
+        
+        data.dropna(inplace = True)
+        data.reset_index(drop = True)
+        
         log_writer.log(file_object, 'Preprocessing is done')
-        scaler = MinMaxScaler()
-        model = scaler.fit(data)
-        scaled_data = model.transform(data)
-
-        # data.to_csv(f'cleaned_{file}.csv', index = False)
+        for i in data.drop('Output', axis = 1).columns:
+            try:
+                scaler = MinMaxScaler()
+                model = scaler.fit(data[i])
+                data[i] = model.transform(data[i])
+            except:
+                continue
+                
+        # data.to_csv('askdhb.csv', index = False)
         blob = bucket.blob(f'preprocess/cleaned_{file}.csv')
-        blob.upload_from_string(data.to_csv(index=False), 'text/csv')
+        blob.upload_from_string(data.to_csv(index = False), 'text/csv')
+        os.remove(f'{file}.csv')
 
     # return Response(response = jsonpickle.encode({'return' : 'test'}), status = 200, mimetype = "application/json")
 

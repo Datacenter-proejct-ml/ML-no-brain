@@ -10,6 +10,8 @@ import sys
 from firebase_admin import credentials, firestore
 import firebase_admin
 import datetime
+import pika
+import jsonpickle
 
 try:
     cred = credentials.Certificate("serviceAccountKey.json")
@@ -21,49 +23,70 @@ try:
 except:
     print('Error connecting to server')
     sys.exit()
-    
 
-# print(doc.get().to_dict())
 
-class trainModel:
-    def __init__(self):
-        pass
+rabbitMQHost = os.getenv("RABBITMQ_HOST") or "localhost"
+print("Connecting to rabbitmq({})".format(rabbitMQHost))
 
-    def trainingModel(self, file):
-        try:
-            Splitting the data into training and test set for each cluster one by one
-            credentials = service_account.Credentials.from_service_account_file(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
-            scoped_credentials = credentials.with_scopes(['https://www.googleapis.com/auth/cloud-platform'])
-            storage_client = storage.Client()
-            bucket_name = 'dtsc-auto-ml'
-            bucket = storage_client.get_bucket(bucket_name)
 
-            blobs = list(bucket.list_blobs(prefix = 'preprocess/', delimiter='/'))
-            blob = bucket.blob(f'preprocess/cleaned_{file}.csv')
-            blob.download_to_filename(f'cleaned_{file}.csv')
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host=rabbitMQHost))
 
-            df = pd.read_csv(f'cleaned_{file}.csv')
-            x_train, x_test, y_train, y_test = train_test_split(df.drop('Output', axis = 1)._get_numeric_data(), df.Output, test_size=1 / 3, random_state=36)
 
-            best_model_name, best_model = tuner.Model_finder().get_best_model(x_train, y_train, x_test, y_test)
-            print(best_model_name)
-            print(best_model.get_params())
-            res = collection.document(file).set({
-                'created_at': str(datetime.datetime.now()),
-                'created_for': f'cleaned_{file}.csv',
-                'best_model': best_model_name,
-                'best_parameters': str(best_model.get_params())
-            })
+def trainingModel(ch, method, properties, body):
+    data = jsonpickle.decode(body)
 
-            # print(best_model.best_score_)
-            pickle.dump(best_model, open(f'{file}_model', 'wb'))
-            os.remove(f'cleaned_{file}.csv')
-            blob = bucket.blob(f'models/{file}_model')
-            blob.upload_from_filename(f'{file}_model')
-            os.remove(f'{file}_model')
-            # file_op = file_methods.File_Operation(self.file_object, self.log_writer)
-            # save_model = file_op.save_model(best_model, best_model_name)
-        except Exception:
-            print('Error training the model')
-            
-a = trainModel().trainingModel(sys.argv[1])
+    file = data['file']
+    print(file)
+    # Splitting the data into training and test set for each cluster one by one
+    credentials = service_account.Credentials.from_service_account_file(
+        os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+    scoped_credentials = credentials.with_scopes(
+        ['https://www.googleapis.com/auth/cloud-platform'])
+    storage_client = storage.Client()
+    bucket_name = 'dtsc-auto-ml'
+    bucket = storage_client.get_bucket(bucket_name)
+
+    blobs = list(bucket.list_blobs(prefix='preprocess/', delimiter='/'))
+    blob = bucket.blob(f'preprocess/cleaned_{file}.csv')
+    blob.download_to_filename(f'cleaned_{file}.csv')
+
+    df = pd.read_csv(f'cleaned_{file}.csv')
+    x_train, x_test, y_train, y_test = train_test_split(df.drop(
+        'Output', axis=1)._get_numeric_data(), df.Output, test_size=1 / 3, random_state=36)
+
+    best_model_name, best_model = tuner.Model_finder(
+    ).get_best_model(x_train, y_train, x_test, y_test)
+    print(best_model_name)
+    print(best_model.get_params())
+    res = collection.document(file).set({
+        'created_at': str(datetime.datetime.now()),
+        'created_for': f'cleaned_{file}.csv',
+        'best_model': best_model_name,
+        'best_parameters': str(best_model.get_params())
+    })
+
+    # print(best_model.best_score_)
+    pickle.dump(best_model, open(f'{file}_model', 'wb'))
+    os.remove(f'cleaned_{file}.csv')
+    blob = bucket.blob(f'models/{file}_model')
+    blob.upload_from_filename(f'{file}_model')
+    os.remove(f'{file}_model')
+    # file_op = file_methods.File_Operation(self.file_object, self.log_writer)
+    # save_model = file_op.save_model(best_model, best_model_name)
+
+
+rabbitMQChannel = connection.channel()
+
+result = rabbitMQChannel.queue_declare(queue='toTrain')
+rabbitMQChannel.exchange_declare(
+    exchange='toTrain', exchange_type='direct')
+queue_name = result.method.queue
+
+rabbitMQChannel.queue_bind(
+    exchange='toTrain', queue=queue_name, routing_key="toTrain")
+
+rabbitMQChannel.basic_consume(
+    queue=queue_name, on_message_callback=trainingModel, auto_ack=True)
+
+rabbitMQChannel.start_consuming()

@@ -1,0 +1,26 @@
+apiVersion: apps/v1 #  for k8s versions before 1.9.0 use apps/v1beta2  and before 1.8.0 use extensions/v1beta1
+kind: Deployment
+metadata:
+  name: preprocess-worker
+spec:
+  selector:
+    matchLabels:
+      app: preprocess-worker
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: preprocess-worker
+    spec:
+      containers:
+      - name: preprocess-worker
+        image: vinay121996/preprocess-image:v1
+        env:
+        - name: RABBITMQ_HOST
+          value: rabbitmq.default
+        resources:
+          requests:
+            cpu: 100m
+            memory: 500Mi
+        ports:
+        - containerPort: 5000
